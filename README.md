@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Book Review Management System
 
 A full-stack web application for managing book reviews, built with HTML, CSS, JavaScript, Node.js, and MySQL.
@@ -234,3 +235,6 @@ If you encounter any issues or have questions, please:
 ---
 
 **⭐ Star this repository if you find it helpful!** 
+=======
+# Book-Review-Management-System
+>>>>>>> a482fa9ff8d3333fb3fd64a88e7c980252dc018b

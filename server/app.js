@@ -370,6 +370,40 @@ app.get("/books", async (req, res) => {
   }
 });
 
+// Get all users (READ operation - Admin only)
+app.get("/users", verifyToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: "Access denied. Admin privileges required." });
+    }
+    
+    const users = await executeQuery(
+      "SELECT id, name, email, role, created_at FROM users ORDER BY created_at DESC"
+    );
+    
+    res.json({ users });
+  } catch (error) {
+    console.error("Users retrieval error:", error);
+    res.status(500).json({ error: "Failed to retrieve users" });
+  }
+});
+
+// Get reviews count (READ operation - Admin only)
+app.get("/reviews/count", verifyToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: "Access denied. Admin privileges required." });
+    }
+    
+    const result = await executeQuery("SELECT COUNT(*) as total_reviews FROM reviews");
+    
+    res.json({ total_reviews: result[0].total_reviews });
+  } catch (error) {
+    console.error("Reviews count error:", error);
+    res.status(500).json({ error: "Failed to retrieve reviews count" });
+  }
+});
+
 // Get single book with reviews (READ operation)
 app.get("/books/:id", async (req, res) => {
   try {
@@ -382,7 +416,7 @@ app.get("/books/:id", async (req, res) => {
     
     const book = books[0];
     
-    // Get reviews for this book
+    // Get reviews for this book with images
     const reviews = await executeQuery(`
       SELECT r.*, u.name as user_name, u.email as user_email,
              (SELECT COUNT(*) FROM comments WHERE review_id = r.id) as comment_count
@@ -391,6 +425,15 @@ app.get("/books/:id", async (req, res) => {
       WHERE r.book_id = ?
       ORDER BY r.created_at DESC
     `, [id]);
+    
+    // Get images for each review
+    for (let review of reviews) {
+      const images = await executeQuery(
+        "SELECT * FROM images WHERE review_id = ? ORDER BY created_at ASC",
+        [review.id]
+      );
+      review.images = images;
+    }
     
     // Get average rating
     const avgRating = await executeQuery(`

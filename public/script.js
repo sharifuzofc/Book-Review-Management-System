@@ -119,6 +119,34 @@ const utils = {
       stars += `<i class="fas fa-star ${i <= rating ? 'active' : ''}"></i>`;
     }
     return stars;
+  },
+
+  // Show notification
+  showNotification: (message, type = 'success') => {
+    const notification = document.createElement('div');
+    notification.className = `notification ${type}`;
+    notification.textContent = message;
+    notification.style.cssText = `
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      padding: 15px 20px;
+      border-radius: 5px;
+      color: white;
+      font-weight: 500;
+      z-index: 1000;
+      animation: slideIn 0.3s ease-out;
+      ${type === 'success' ? 'background-color: #4CAF50;' : 'background-color: #f44336;'}
+    `;
+    
+    document.body.appendChild(notification);
+    
+    setTimeout(() => {
+      notification.style.animation = 'slideOut 0.3s ease-in';
+      setTimeout(() => {
+        document.body.removeChild(notification);
+      }, 300);
+    }, 3000);
   }
 };
 
@@ -210,12 +238,13 @@ async function registerUser(event) {
   }
 }
 
-// User Login Function
+// User Login Function with enhanced interactivity
 async function loginUser(event) {
   event.preventDefault();
   
   const email = document.getElementById('login-email').value.trim();
   const password = document.getElementById('login-password').value;
+  const loginBtn = document.getElementById('login-btn');
 
   // Validation
   if (!email || !password) {
@@ -229,7 +258,10 @@ async function loginUser(event) {
   }
 
   try {
+    // Enhanced loading state
     utils.showLoading('login-btn');
+    loginBtn.style.transform = 'scale(0.95)';
+    loginBtn.style.transition = 'all 0.2s ease';
 
     const response = await fetch(`${API_BASE_URL}/login`, {
       method: 'POST',
@@ -242,11 +274,26 @@ async function loginUser(event) {
     const data = await response.json();
 
     if (response.ok) {
-      localStorage.setItem('token', data.token);
-      localStorage.setItem('userData', JSON.stringify(data.user));
-      await loadDashboard();
-      toggleForms('dashboard');
+      // Success animation
+      loginBtn.style.backgroundColor = '#4CAF50';
+      loginBtn.querySelector('.btn-text').textContent = 'Success!';
+      
+      setTimeout(() => {
+        localStorage.setItem('token', data.token);
+        localStorage.setItem('userData', JSON.stringify(data.user));
+        loadDashboard().then(() => {
+          toggleForms('dashboard');
+          utils.showNotification('Welcome back!', 'success');
+        });
+      }, 500);
     } else {
+      // Error animation
+      loginBtn.style.backgroundColor = '#f44336';
+      loginBtn.querySelector('.btn-text').textContent = 'Failed';
+      setTimeout(() => {
+        loginBtn.style.backgroundColor = '';
+        loginBtn.querySelector('.btn-text').textContent = 'Login';
+      }, 1000);
       utils.showError('login-error', data.error || 'Invalid credentials');
     }
   } catch (error) {
@@ -254,6 +301,7 @@ async function loginUser(event) {
     utils.showError('login-error', 'Network error. Please try again.');
   } finally {
     utils.hideLoading('login-btn');
+    loginBtn.style.transform = '';
   }
 }
 
@@ -324,6 +372,7 @@ async function showBookDetail(bookId) {
     
     if (response.ok) {
       const { book, reviews, average_rating, total_reviews } = data;
+      const userData = JSON.parse(localStorage.getItem('userData'));
       
       // Update navigation
       showSection('book-detail');
@@ -354,6 +403,13 @@ async function showBookDetail(bookId) {
                   <div class="stat-label">Published Year</div>
                 </div>
               </div>
+              ${userData && userData.role === 'admin' ? `
+                <div class="book-admin-actions">
+                  <button onclick="deleteBook(${book.id})" class="btn-delete">
+                    <i class="fas fa-trash"></i> Delete Book
+                  </button>
+                </div>
+              ` : ''}
             </div>
           </div>
         </div>
@@ -361,7 +417,7 @@ async function showBookDetail(bookId) {
         <div class="reviews-section">
           <h4><i class="fas fa-star"></i> Reviews (${reviews.length})</h4>
           ${reviews.map(review => `
-            <div class="review-card">
+            <div class="review-card" id="review-${review.id}">
               <div class="review-header">
                 <div class="review-user">${review.user_name}</div>
                 <div class="review-date">${utils.formatDate(review.created_at)}</div>
@@ -370,13 +426,21 @@ async function showBookDetail(bookId) {
                 ${utils.generateStars(review.rating)}
                 <span>${review.rating}/5</span>
               </div>
-              <div class="review-text">${review.review_text || 'No review text.'}</div>
+              <div class="review-text" id="review-text-${review.id}">${review.review_text || 'No review text.'}</div>
+              ${review.images && review.images.length > 0 ? `
+                <div class="review-images">
+                  ${review.images.map(image => `
+                    <img src="${image.image_url}" alt="${image.image_name}" class="review-image" 
+                         onclick="openImageModal('${image.image_url}', '${image.image_name}')" />
+                  `).join('')}
+                </div>
+              ` : ''}
               <div class="review-actions">
                 <button onclick="addComment(${review.id})" class="btn-edit">
                   <i class="fas fa-comment"></i> Comment
                 </button>
-                ${review.user_id === JSON.parse(localStorage.getItem('userData')).id ? `
-                  <button onclick="editReview(${review.id})" class="btn-edit">
+                ${userData && review.user_id === userData.id ? `
+                  <button onclick="editReview(${review.id}, ${review.rating}, '${review.review_text || ''}')" class="btn-edit">
                     <i class="fas fa-edit"></i> Edit
                   </button>
                   <button onclick="deleteReview(${review.id})" class="btn-delete">
@@ -395,6 +459,176 @@ async function showBookDetail(bookId) {
   } catch (error) {
     console.error('Book detail loading error:', error);
     utils.showError('book-detail-error', 'Failed to load book details');
+  }
+}
+
+// Edit Review Function
+async function editReview(reviewId, currentRating, currentText) {
+  const reviewCard = document.getElementById(`review-${reviewId}`);
+  const reviewText = document.getElementById(`review-text-${reviewId}`);
+  
+  // Create edit form
+  const editForm = `
+    <div class="review-edit-form">
+      <div class="rating-group">
+        <label>Rating:</label>
+        <div class="stars" id="edit-stars-${reviewId}">
+          <i class="fas fa-star" data-rating="1" onclick="setEditRating(${reviewId}, 1)"></i>
+          <i class="fas fa-star" data-rating="2" onclick="setEditRating(${reviewId}, 2)"></i>
+          <i class="fas fa-star" data-rating="3" onclick="setEditRating(${reviewId}, 3)"></i>
+          <i class="fas fa-star" data-rating="4" onclick="setEditRating(${reviewId}, 4)"></i>
+          <i class="fas fa-star" data-rating="5" onclick="setEditRating(${reviewId}, 5)"></i>
+        </div>
+        <input type="hidden" id="edit-rating-${reviewId}" value="${currentRating}" />
+      </div>
+      <div class="input-group">
+        <textarea id="edit-review-text-${reviewId}" placeholder="Write your review..." rows="4">${currentText}</textarea>
+      </div>
+      <div class="edit-actions">
+        <button onclick="saveReviewEdit(${reviewId})" class="btn-primary">Save</button>
+        <button onclick="cancelReviewEdit(${reviewId})" class="btn-secondary">Cancel</button>
+      </div>
+    </div>
+  `;
+  
+  reviewText.innerHTML = editForm;
+  
+  // Set initial rating
+  setEditRating(reviewId, currentRating);
+}
+
+// Set edit rating
+function setEditRating(reviewId, rating) {
+  document.getElementById(`edit-rating-${reviewId}`).value = rating;
+  const stars = document.querySelectorAll(`#edit-stars-${reviewId} i`);
+  stars.forEach((star, index) => {
+    star.classList.toggle('active', index < rating);
+  });
+}
+
+// Save review edit
+async function saveReviewEdit(reviewId) {
+  const rating = parseInt(document.getElementById(`edit-rating-${reviewId}`).value);
+  const reviewText = document.getElementById(`edit-review-text-${reviewId}`).value.trim();
+  
+  if (!rating || rating < 1 || rating > 5) {
+    utils.showNotification('Please select a rating', 'error');
+    return;
+  }
+  
+  try {
+    await utils.makeAuthenticatedRequest(`/reviews/${reviewId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ rating, review_text: reviewText })
+    });
+    
+    utils.showNotification('Review updated successfully!', 'success');
+    
+    // Reload book detail to show updated review
+    await showBookDetail(window.currentBookId);
+  } catch (error) {
+    console.error('Review update error:', error);
+    utils.showNotification(error.message || 'Failed to update review', 'error');
+  }
+}
+
+// Cancel review edit
+function cancelReviewEdit(reviewId) {
+  // Reload book detail to restore original review
+  showBookDetail(window.currentBookId);
+}
+
+// Delete Review Function
+async function deleteReview(reviewId) {
+  if (!confirm('Are you sure you want to delete this review? This action cannot be undone.')) {
+    return;
+  }
+  
+  try {
+    await utils.makeAuthenticatedRequest(`/reviews/${reviewId}`, {
+      method: 'DELETE'
+    });
+    
+    utils.showNotification('Review deleted successfully!', 'success');
+    
+    // Reload book detail to show updated reviews
+    await showBookDetail(window.currentBookId);
+  } catch (error) {
+    console.error('Review deletion error:', error);
+    utils.showNotification(error.message || 'Failed to delete review', 'error');
+  }
+}
+
+// Delete Book Function (Admin only)
+async function deleteBook(bookId) {
+  if (!confirm('Are you sure you want to delete this book? This action cannot be undone and will also delete all associated reviews.')) {
+    return;
+  }
+  
+  try {
+    await utils.makeAuthenticatedRequest(`/books/${bookId}`, {
+      method: 'DELETE'
+    });
+    
+    utils.showNotification('Book deleted successfully!', 'success');
+    
+    // Go back to books list
+    showSection('books');
+    await loadBooks();
+  } catch (error) {
+    console.error('Book deletion error:', error);
+    utils.showNotification(error.message || 'Failed to delete book', 'error');
+  }
+}
+
+// Open Image Modal Function
+function openImageModal(imageUrl, imageName) {
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+  modal.innerHTML = `
+    <div class="modal-content image-modal">
+      <div class="modal-header">
+        <h3>${imageName}</h3>
+        <button onclick="this.closest('.modal').remove()" class="close-btn">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="modal-body">
+        <img src="${imageUrl}" alt="${imageName}" class="modal-image" />
+      </div>
+    </div>
+  `;
+  
+  document.body.appendChild(modal);
+  
+  // Close modal when clicking outside
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) {
+      modal.remove();
+    }
+  });
+}
+
+// Add Comment Function
+async function addComment(reviewId) {
+  const commentText = prompt('Enter your comment:');
+  if (!commentText || commentText.trim().length === 0) {
+    return;
+  }
+  
+  try {
+    await utils.makeAuthenticatedRequest(`/reviews/${reviewId}/comments`, {
+      method: 'POST',
+      body: JSON.stringify({ comment_text: commentText.trim() })
+    });
+    
+    utils.showNotification('Comment added successfully!', 'success');
+    
+    // Reload book detail to show new comment
+    await showBookDetail(window.currentBookId);
+  } catch (error) {
+    console.error('Comment creation error:', error);
+    utils.showNotification(error.message || 'Failed to add comment', 'error');
   }
 }
 
@@ -447,7 +681,7 @@ async function addBook(event) {
   const cover_image = document.getElementById('book-cover').value.trim();
 
   if (!title || !author) {
-    utils.showError('book-error', 'Title and author are required');
+    utils.showNotification('Title and author are required', 'error');
     return;
   }
 
@@ -465,12 +699,12 @@ async function addBook(event) {
       })
     });
 
-    utils.showSuccess('book-success', 'Book added successfully!');
+    utils.showNotification('Book added successfully!', 'success');
     hideAddBookForm();
     await loadBooks();
   } catch (error) {
     console.error('Book creation error:', error);
-    utils.showError('book-error', error.message || 'Failed to add book');
+    utils.showNotification(error.message || 'Failed to add book', 'error');
   }
 }
 
@@ -483,12 +717,12 @@ async function submitReview(event) {
   const image_url = document.getElementById('review-image').value.trim();
 
   if (!rating || rating < 1 || rating > 5) {
-    utils.showError('review-error', 'Please select a rating');
+    utils.showNotification('Please select a rating', 'error');
     return;
   }
 
   if (!window.currentBookId) {
-    utils.showError('review-error', 'No book selected');
+    utils.showNotification('No book selected', 'error');
     return;
   }
 
@@ -506,7 +740,7 @@ async function submitReview(event) {
       });
     }
 
-    utils.showSuccess('review-success', 'Review submitted successfully!');
+    utils.showNotification('Review submitted successfully!', 'success');
     utils.clearForm('reviewForm');
     document.getElementById('review-rating').value = '0';
     document.querySelectorAll('.stars i').forEach(star => star.classList.remove('active'));
@@ -515,7 +749,7 @@ async function submitReview(event) {
     await showBookDetail(window.currentBookId);
   } catch (error) {
     console.error('Review submission error:', error);
-    utils.showError('review-error', error.message || 'Failed to submit review');
+    utils.showNotification(error.message || 'Failed to submit review', 'error');
   }
 }
 
@@ -539,13 +773,15 @@ async function loadAdminStats() {
   try {
     const usersResponse = await utils.makeAuthenticatedRequest('/users');
     const booksResponse = await fetch(`${API_BASE_URL}/books`);
+    const reviewsResponse = await utils.makeAuthenticatedRequest('/reviews/count');
     
     const usersData = await usersResponse;
     const booksData = await booksResponse.json();
+    const reviewsData = await reviewsResponse;
     
     document.getElementById('total-users').textContent = usersData.users.length;
     document.getElementById('total-books').textContent = booksData.books.length;
-    document.getElementById('total-reviews').textContent = '0'; // You can add a reviews endpoint
+    document.getElementById('total-reviews').textContent = reviewsData.total_reviews;
     
     // Load users list
     const usersList = document.getElementById('users-list');
@@ -664,6 +900,60 @@ document.addEventListener('DOMContentLoaded', function() {
   if (loginForm) {
     loginForm.classList.add('fade-in');
   }
+
+  // Add CSS animations
+  const style = document.createElement('style');
+  style.textContent = `
+    @keyframes slideIn {
+      from { transform: translateX(100%); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+    
+    @keyframes slideOut {
+      from { transform: translateX(0); opacity: 1; }
+      to { transform: translateX(100%); opacity: 0; }
+    }
+    
+    .review-edit-form {
+      background: #f9f9f9;
+      padding: 15px;
+      border-radius: 5px;
+      margin: 10px 0;
+    }
+    
+    .edit-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    
+    .btn-primary, .btn-secondary {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    
+    .btn-primary {
+      background-color: #007bff;
+      color: white;
+    }
+    
+    .btn-secondary {
+      background-color: #6c757d;
+      color: white;
+    }
+    
+    .btn-primary:hover {
+      background-color: #0056b3;
+    }
+    
+    .btn-secondary:hover {
+      background-color: #545b62;
+    }
+  `;
+  document.head.appendChild(style);
 });
 
 // Export functions for global access
@@ -675,3 +965,9 @@ window.showBookDetail = showBookDetail;
 window.showEditProfile = showEditProfile;
 window.cancelEditProfile = cancelEditProfile;
 window.logoutUser = logoutUser;
+window.editReview = editReview;
+window.deleteReview = deleteReview;
+window.addComment = addComment;
+window.setEditRating = setEditRating;
+window.saveReviewEdit = saveReviewEdit;
+window.cancelReviewEdit = cancelReviewEdit;
